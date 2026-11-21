@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>독거또랭 맛집지도</title>
+<title>가성비 맛집 지도</title>
+ #credit { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); z-index: 3;
+            background: rgba(255,255,255,.85); border-radius: 10px; padding: 3px 10px;
+            font-size: 11px; color: #555; white-space: nowrap; pointer-events: none; }
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; font-family: 'Pretendard', 'Malgun Gothic', sans-serif; color: #222; }
@@ -60,13 +63,13 @@
   <aside id="side">
     <header>
       <button id="toggle" type="button">목록 접기</button>
-      <h1>🍚 독거또랭 맛집지도</h1>
+      <h1>🍚 가성비 맛집지도</h1>
       <div id="count">불러오는 중…</div>
       <input id="search" type="search" placeholder="식당명·지역·메뉴 검색">
     </header>
     <ul id="list"></ul>
   </aside>
-  <div id="map"><div id="msg">지도를 불러오는 중…</div></div>
+   <div id="map"><div id="msg">지도를 불러오는 중…</div><div id="credit">Made by Hearim Psychology Institute · 꽃보다 심리학</div></div>
 </div>
 
 <script>
