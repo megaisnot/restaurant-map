@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>독거또랭 맛집지도</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: 'Pretendard', 'Malgun Gothic', sans-serif; color: #222; }
+  #app { display: flex; height: 100%; }
+  #side { width: 320px; display: flex; flex-direction: column; border-right: 1px solid #ddd; background: #fff; z-index: 2; }
+  #side header { padding: 14px 14px 10px; border-bottom: 1px solid #eee; }
+  #side h1 { font-size: 18px; margin: 0 0 8px; }
+  #count { font-size: 12px; color: #777; margin-bottom: 8px; }
+  #search { width: 100%; padding: 9px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 8px; }
+  #list { flex: 1; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+  #list li { padding: 10px 14px; border-bottom: 1px solid #f2f2f2; cursor: pointer; }
+  #list li:hover { background: #fff8e6; }
+  #list .n { font-weight: 700; font-size: 14px; }
+  #list .m { font-size: 12px; color: #666; margin-top: 2px; }
+  #list .a { font-size: 11px; color: #999; margin-top: 2px; }
+  #map { flex: 1; position: relative; }
+  #msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+         background: #fafafa; color: #555; font-size: 15px; padding: 20px; text-align: center; z-index: 5; white-space: pre-line; }
+  #toggle { display: none; }
+
+  /* 마커 옆 이름 라벨 */
+  .label { background: #fff; border: 1px solid #f0a020; border-radius: 12px; padding: 2px 8px;
+           font-size: 12px; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.15); transform: translate(14px, -26px); }
+  .label b { color: #c45c00; }
+  .label span { color: #666; margin-left: 4px; }
+
+  /* 팝업 */
+  .pop { position: relative; width: 290px; max-height: 360px; overflow-y: auto; background: #fff; border-radius: 12px;
+         box-shadow: 0 4px 16px rgba(0,0,0,.25); padding: 14px 14px 12px; font-size: 13px; line-height: 1.45;
+         transform: translateY(-48px); }
+  .pop .x { position: absolute; top: 6px; right: 10px; cursor: pointer; font-size: 18px; color: #999; }
+  .pop .place + .place { border-top: 1px dashed #ddd; margin-top: 10px; padding-top: 10px; }
+  .pop h3 { margin: 0 0 4px; font-size: 16px; }
+  .pop .memo { color: #c45c00; margin-bottom: 4px; }
+  .pop .row { color: #555; }
+  .pop .row b { color: #888; font-weight: 400; margin-right: 4px; }
+  .pop .vids { margin: 6px 0 0; padding-left: 16px; }
+  .pop .links { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .pop .links a { font-size: 12px; text-decoration: none; padding: 4px 8px; border-radius: 6px; background: #f3f3f3; color: #333; }
+  .pop .links a.yt { background: #ffe5e5; color: #c00; }
+
+  @media (max-width: 700px) {
+    #app { flex-direction: column-reverse; }
+    #side { width: 100%; height: 38%; border-right: 0; border-top: 1px solid #ddd; }
+    #side.closed { height: auto; }
+    #side.closed #list { display: none; }
+    #toggle { display: inline-block; float: right; font-size: 12px; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 3px 8px; }
+    .pop { width: 250px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <header>
+      <button id="toggle" type="button">목록 접기</button>
+      <h1>🍚 독거또랭 맛집지도</h1>
+      <div id="count">불러오는 중…</div>
+      <input id="search" type="search" placeholder="식당명·지역·메뉴 검색">
+    </header>
+    <ul id="list"></ul>
+  </aside>
+  <div id="map"><div id="msg">지도를 불러오는 중…</div></div>
+</div>
+
+<script>
+// ============================================================
+// 설정: 이 두 줄만 바꾸면 됩니다
+// ============================================================
+const CONFIG = {
+  // 카카오 개발자 사이트 → 내 애플리케이션 → 앱 키 → "JavaScript 키"
+  KAKAO_JS_KEY: '88530bd49840142665687c26cb95b5d2',
+  // 구글 시트 → 파일 → 공유 → 웹에 게시 → [식당목록] 탭, [CSV] 선택 → 나온 주소
+  SHEET_CSV_URL: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSIEiaUl8KND4FEt2T_GvaR1Xd9ychPRrkfm-qphLEh-0VZEyFyeDtdoKyRPf2jeRMNDUdbXEyshI-E/pub?gid=1689784627&single=true&output=csv',
+  // 이 확대 레벨 이하(가까이)에서만 마커 옆 이름 라벨을 보여줌 (1=가장 가까움)
+  LABEL_LEVEL: 5,
+};
+
+// 시트 열 이름 (첫 줄 제목과 같아야 함)
+const COLS = {
+  name: '식당명', address: '주소', memo: '메모', lat: '위도', lng: '경도',
+  title: '영상 제목', url: '영상 URL', date: '업로드일', kakao: '카카오URL',
+  hours: '영업시간', phone: '전화번호', guide: '교통·위치 안내', status: '좌표검색상태', review: '검토 메모',
+};
+
+// ============================================================
+// 데이터 처리 (순수 함수)
+// ============================================================
+function parseCSV(text) {
+  const rows = []; let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(field); field = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += ch;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function toRecords(rows) {
+  const norm = s => String(s || '').replace(/\s+/g, '');
+  const header = rows[0].map(norm);
+  const idx = {};
+  for (const [k, title] of Object.entries(COLS)) idx[k] = header.indexOf(norm(title));
+  if (idx.name < 0 || idx.lat < 0 || idx.lng < 0) {
+    throw new Error('시트에서 "식당명", "위도", "경도" 열을 찾지 못했습니다.\n현재 열: ' + rows[0].join(', '));
+  }
+  const get = (r, k) => (idx[k] >= 0 ? String(r[idx[k]] || '').trim() : '');
+  const out = [];
+  for (const r of rows.slice(1)) {
+    const name = get(r, 'name');
+    const lat = parseFloat(get(r, 'lat')), lng = parseFloat(get(r, 'lng'));
+    if (!name || !isFinite(lat) || !isFinite(lng)) continue;
+    if (lat < 33 || lat > 39 || lng < 124 || lng > 132) continue;          // 국내 범위 밖 제외
+    if (/제외/.test(get(r, 'status') + get(r, 'review'))) continue;          // "제외" 표시한 행 빼기
+    out.push({
+      name, lat, lng,
+      address: get(r, 'address'), memo: get(r, 'memo'), kakao: get(r, 'kakao'),
+      hours: get(r, 'hours'), phone: get(r, 'phone'), guide: get(r, 'guide'),
+      video: { title: get(r, 'title'), url: get(r, 'url'), date: get(r, 'date') },
+    });
+  }
+  return out;
+}
+
+// 같은 식당(재방문 영상)은 하나로 합치고, 같은 좌표의 다른 가게는 한 마커로 묶음
+function groupPlaces(records) {
+  const places = new Map();
+  for (const rec of records) {
+    const key = rec.name.replace(/\s+/g, '') + '|' + rec.lat.toFixed(5) + ',' + rec.lng.toFixed(5);
+    if (!places.has(key)) places.set(key, { ...rec, videos: [] });
+    const p = places.get(key);
+    for (const f of ['address', 'memo', 'kakao', 'hours', 'phone', 'guide']) if (!p[f] && rec[f]) p[f] = rec[f];
+    if (rec.video.url && !p.videos.some(v => v.url === rec.video.url)) p.videos.push(rec.video);
+  }
+  for (const p of places.values()) p.videos.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  const spots = new Map();
+  for (const p of places.values()) {
+    const key = p.lat.toFixed(5) + ',' + p.lng.toFixed(5);
+    if (!spots.has(key)) spots.set(key, { lat: p.lat, lng: p.lng, places: [] });
+    spots.get(key).places.push(p);
+  }
+  return [...spots.values()];
+}
+
+function esc(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function safeUrl(u) { return /^https?:\/\//i.test(u) ? esc(u) : ''; }
+
+function popupHTML(spot) {
+  const body = spot.places.map(p => {
+    const rows = [
+      p.address && `<div class="row"><b>주소</b>${esc(p.address)}</div>`,
+      p.guide && `<div class="row"><b>위치</b>${esc(p.guide)}</div>`,
+      p.hours && `<div class="row"><b>영업</b>${esc(p.hours)}</div>`,
+      p.phone && `<div class="row"><b>전화</b>${esc(p.phone)}</div>`,
+    ].filter(Boolean).join('');
+    const vids = p.videos.filter(v => safeUrl(v.url)).map(v =>
+      `<li><a href="${safeUrl(v.url)}" target="_blank" rel="noopener">${esc(v.title || '영상 보기')}</a>` +
+      (v.date ? ` <small>(${esc(v.date)})</small>` : '') + `</li>`).join('');
+    const route = `https://map.kakao.com/link/to/${encodeURIComponent(p.name)},${p.lat},${p.lng}`;
+    return `<div class="place">
+      <h3>${esc(p.name)}</h3>
+      ${p.memo ? `<div class="memo">${esc(p.memo)}</div>` : ''}
+      ${rows}
+      ${vids ? `<ul class="vids">${vids}</ul>` : ''}
+      <div class="links">
+        ${p.videos[0] && safeUrl(p.videos[0].url) ? `<a class="yt" href="${safeUrl(p.videos[0].url)}" target="_blank" rel="noopener">▶ 유튜브</a>` : ''}
+        ${safeUrl(p.kakao) ? `<a href="${safeUrl(p.kakao)}" target="_blank" rel="noopener">카카오 장소</a>` : ''}
+        <a href="${route}" target="_blank" rel="noopener">길찾기</a>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="pop"><span class="x" onclick="closePopup()">×</span>${body}</div>`;
+}
+
+function labelHTML(spot) {
+  const p = spot.places[0];
+  const extra = spot.places.length > 1 ? ` 외 ${spot.places.length - 1}곳` : '';
+  return `<div class="label"><b>${esc(p.name)}</b>${extra}${p.memo ? `<span>${esc(p.memo)}</span>` : ''}</div>`;
+}
+
+// ============================================================
+// 지도
+// ============================================================
+let map, popup, spots = [];
+
+function showMsg(text) { const m = document.getElementById('msg'); m.textContent = text; m.style.display = 'flex'; }
+function closePopup() { if (popup) popup.setMap(null); }
+
+function loadKakao() {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(CONFIG.KAKAO_JS_KEY)}&libraries=clusterer&autoload=false`;
+    s.onload = () => (window.kakao && kakao.maps ? kakao.maps.load(resolve) : reject());
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function init() {
+  if (CONFIG.KAKAO_JS_KEY.startsWith('여기에') || CONFIG.SHEET_CSV_URL.startsWith('여기에')) {
+    return showMsg('index.html 위쪽 CONFIG에\nJavaScript 키와 시트 CSV 주소를 넣어 주세요.');
+  }
+  let records;
+  try {
+    const res = await fetch(CONFIG.SHEET_CSV_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error('시트를 불러오지 못했습니다 (' + res.status + '). 웹에 게시했는지 확인하세요.');
+    records = toRecords(parseCSV(await res.text()));
+  } catch (e) { return showMsg(e.message); }
+
+  try { await loadKakao(); }
+  catch { return showMsg('카카오 지도를 불러오지 못했습니다.\nJavaScript 키와, 카카오 개발자 사이트에 등록한\n사이트 도메인을 확인하세요.'); }
+
+  spots = groupPlaces(records);
+  if (!spots.length) return showMsg('지도에 표시할 식당이 없습니다. 위도·경도가 채워졌는지 확인하세요.');
+  document.getElementById('msg').style.display = 'none';
+
+  map = new kakao.maps.Map(document.getElementById('map'), { center: new kakao.maps.LatLng(37.47, 126.70), level: 8 });
+  map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+  const clusterer = new kakao.maps.MarkerClusterer({ map, averageCenter: true, minLevel: 6, disableClickZoom: false });
+  popup = new kakao.maps.CustomOverlay({ yAnchor: 1, zIndex: 10 });
+
+  const bounds = new kakao.maps.LatLngBounds();
+  const markers = [];
+  for (const spot of spots) {
+    const pos = new kakao.maps.LatLng(spot.lat, spot.lng);
+    spot.marker = new kakao.maps.Marker({ position: pos, title: spot.places.map(p => p.name).join(', ') });
+    spot.label = new kakao.maps.CustomOverlay({ position: pos, content: labelHTML(spot), yAnchor: 0, xAnchor: 0 });
+    kakao.maps.event.addListener(spot.marker, 'click', () => openSpot(spot, false));
+    markers.push(spot.marker);
+    bounds.extend(pos);
+  }
+  clusterer.addMarkers(markers);
+  map.setBounds(bounds);
+
+  const updateLabels = () => {
+    const show = map.getLevel() <= CONFIG.LABEL_LEVEL;
+    const view = map.getBounds();
+    for (const s of spots) s.label.setMap(show && view.contain(s.marker.getPosition()) ? map : null);
+  };
+  kakao.maps.event.addListener(map, 'idle', updateLabels);
+  kakao.maps.event.addListener(map, 'click', closePopup);
+
+  const placeCount = spots.reduce((n, s) => n + s.places.length, 0);
+  document.getElementById('count').textContent = `식당 ${placeCount}곳 · 시트에서 실시간으로 불러옴`;
+  renderList('');
+  document.getElementById('search').addEventListener('input', e => renderList(e.target.value));
+}
+
+function openSpot(spot, zoom) {
+  if (zoom) map.setLevel(Math.min(map.getLevel(), 4));
+  map.panTo(spot.marker.getPosition());
+  popup.setContent(popupHTML(spot));
+  popup.setPosition(spot.marker.getPosition());
+  popup.setMap(map);
+}
+
+function renderList(query) {
+  const q = query.replace(/\s+/g, '').toLowerCase();
+  const items = [];
+  for (const spot of spots) for (const p of spot.places) {
+    const hay = (p.name + p.memo + p.address + p.videos.map(v => v.title).join('')).replace(/\s+/g, '').toLowerCase();
+    if (!q || hay.includes(q)) items.push({ spot, p });
+  }
+  items.sort((a, b) => a.p.name.localeCompare(b.p.name, 'ko'));
+  const ul = document.getElementById('list');
+  ul.innerHTML = items.map((it, i) =>
+    `<li data-i="${i}"><div class="n">${esc(it.p.name)}</div>` +
+    (it.p.memo ? `<div class="m">${esc(it.p.memo)}</div>` : '') +
+    `<div class="a">${esc(it.p.address)}${it.p.videos.length > 1 ? ` · 영상 ${it.p.videos.length}개` : ''}</div></li>`).join('');
+  ul.onclick = e => {
+    const li = e.target.closest('li'); if (!li) return;
+    openSpot(items[+li.dataset.i].spot, true);
+    if (window.innerWidth <= 700) document.getElementById('side').classList.add('closed');
+  };
+}
+
+document.getElementById('toggle').addEventListener('click', () => {
+  const side = document.getElementById('side');
+  side.classList.toggle('closed');
+  document.getElementById('toggle').textContent = side.classList.contains('closed') ? '목록 펼치기' : '목록 접기';
+});
+
+if (typeof module === 'undefined') init();
+else module.exports = { parseCSV, toRecords, groupPlaces, popupHTML };
+</script>
+</body>
+</html>
